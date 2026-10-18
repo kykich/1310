@@ -164,6 +164,38 @@ def parse_help(question):
     return (match.group(1) or "").strip()
 
 
+# ----------------------------------------------------------------------
+# Команда /review (docs/Final_task.md, задача 2): AI-ревью PR прямо в чате
+# ----------------------------------------------------------------------
+# /review [base] [head] [--no-rag]
+#   по умолчанию base=HEAD~1, head=HEAD — ревью последнего коммита;
+#   можно указать ревизии (например: /review origin/master HEAD);
+#   --no-rag — не подмешивать контекст RAG (быстрее, дешевле).
+_REVIEW_RE = re.compile(r"^\s*/review\b(.*)$", re.IGNORECASE | re.DOTALL)
+_REVIEW_DEFAULT_BASE = "HEAD~1"
+_REVIEW_DEFAULT_HEAD = "HEAD"
+
+
+def parse_review(question):
+    """Разбирает /review [base] [head] [--no-rag].
+
+    Возвращает dict {base, head, use_rag} или None, если это не /review.
+    """
+    match = _REVIEW_RE.match(str(question or ""))
+    if not match:
+        return None
+    use_rag = True
+    parts = []
+    for token in (match.group(1) or "").split():
+        if token.lower() in ("--no-rag", "no-rag"):
+            use_rag = False
+        else:
+            parts.append(token)
+    return {"base": parts[0] if parts else _REVIEW_DEFAULT_BASE,
+            "head": parts[1] if len(parts) > 1 else _REVIEW_DEFAULT_HEAD,
+            "use_rag": use_rag}
+
+
 def project_git_note(docs_dir=None, timeout=15):
     """Сведения о git-ветке через MCP-сервер «Проект».
 
@@ -366,16 +398,18 @@ def _sync_agent_local():
         return
     settings = _local_manager().load_settings()
     enabled = bool(settings.get("enabled"))
+    mgr = _local_manager()
+    running = mgr.is_running()
     params = settings.get("params") or {}
     url = None
     model_name = None
-    if enabled:
+    if enabled or running:
         h = params.get("host") or config.LOCAL_HOST
         p = params.get("port") or config.LOCAL_PORT
         url = local_server.server_url(h, p)
         # Имя модели: сначала из /v1/models запущенного сервера, иначе из
         # параметров (basename .gguf без расширения), иначе метка по умолчанию.
-        runtime = _local_manager().status()
+        runtime = mgr.status() if running else {}
         rmodels = runtime.get("models") or []
         if rmodels:
             model_name = rmodels[0]
@@ -385,6 +419,26 @@ def _sync_agent_local():
                           if model_path else config.LOCAL_LABEL)
     agent.set_local_model(url=url, model=model_name,
                           label=config.LOCAL_LABEL)
+
+
+def _running_local_label():
+    """Метка локальной модели, если её сервер ЗАПУЩЕН и готов (иначе "").
+
+    Используется для выбора локальной модели по умолчанию: как только сервер
+    поднят через блок «Локальная модель», /help и чат работают через неё, без
+    ручного выбора модели в селекторе.
+    """
+    try:
+        mgr = _local_manager()
+        if not mgr.is_running():
+            return ""
+        status = mgr.status()
+        if not status.get("ready"):
+            return ""
+        return str(config.LOCAL_LABEL or "Local")
+    except Exception as exc:                     # noqa: BLE001
+        print("[LOCAL] не удалось определить статус: %s" % exc, flush=True)
+        return ""
 
 def _mcp_state_payload(check=False):
     """Собирает состояние MCP для ответа клиенту.
@@ -1035,6 +1089,70 @@ class WebRequestHandler(BaseHTTPRequestHandler):
             "rag_low_relevance": False,
         }
 
+    def _review_payload(self, spec, model_label, repo_dir):
+        """AI-ревью PR/диффа для команды /review (результат — в чат).
+
+        spec — {base, head, use_rag} из parse_review();
+        model_label — выбранная модель/персона/локальная;
+        repo_dir — репозиторий (обычно docs_dir из настроек RAG).
+        """
+        from rtk_app import pr_review, html_report
+        max_diff_chars = pr_review.MAX_DIFF_CHARS
+        ctx = 8192
+        local_alias = ""
+        try:
+            with open(config.LOCAL_SETTINGS_FILE, encoding="utf-8") as fh:
+                settings = json.load(fh)
+            params = settings.get("params") or {}
+            ctx = int(params.get("ctx") or ctx)
+            local_alias = str(params.get("alias") or "").strip()
+        except Exception:                        # noqa: BLE001
+            pass
+        local_labels = {"Local",
+                        str(getattr(config, "LOCAL_LABEL", "Local") or "Local")}
+        running_label = _running_local_label()
+        if running_label:
+            local_labels.add(str(running_label))
+        if local_alias:
+            local_labels.add(local_alias)
+        if model_label and model_label in local_labels:
+            # Локальный llama-server с ctx 8192 не примет весь большой diff.
+            max_diff_chars = pr_review.local_review_diff_limit(
+                ctx_tokens=ctx, max_tokens=4000)
+        result = pr_review.review_changes(
+            repo=repo_dir,
+            base=(spec or {}).get("base"),
+            head=(spec or {}).get("head"),
+            model=model_label,
+            use_rag=bool((spec or {}).get("use_rag")),
+            max_tokens=4000,
+            max_diff_chars=max_diff_chars)
+        review = result.get("review") or ""
+        if not review:
+            error = " ".join(str(result.get("error") or "неизвестная ошибка")
+                             .split())
+            review = ("## AI-ревью PR\n\n_Ревью не выполнено: %s_" % error)
+        try:
+            html = html_report.text_to_html_paragraphs(review)
+        except Exception:                        # noqa: BLE001
+            html = ""
+        label = model_label or "review"
+        return {
+            "ok": bool(result.get("ok")),
+            "review": True,
+            "text": review,
+            "html": html,
+            "answers": [{"label": label, "model": label, "text": review,
+                         "temperature": None}],
+            "files": result.get("files") or [],
+            "stat": result.get("stat") or "",
+            "rag_used": bool(result.get("rag_used")),
+            "rag_hits": result.get("rag_hits"),
+            "diff_truncated": result.get("diff_truncated"),
+            "usage": result.get("usage"),
+            "error": result.get("error"),
+        }
+
     def _handle_ask(self):
         """Принимает запрос пользователя и передаёт его агенту.
 
@@ -1061,6 +1179,12 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         if is_help:
             question = help_query or _HELP_DEFAULT_QUESTION
 
+        # КОМАНДА /review (docs/Final_task.md, задача 2): AI-ревью PR/диффа
+        # прямо в чате. Репозиторий — docs_dir, модель — выбранная/персона/
+        # локальная. Команда не перехватывается MCP/«Доской».
+        review_spec = parse_review(question)
+        is_review = review_spec is not None
+
         # «ДОСКА» — особый сервер ВЫВОДА: запрос к ней обрабатывается через
         # MCP-путь (с предварительным обновлением данных композицией) и
         # НЕЗАВИСИМО от чекбокса «Использовать MCP». Для «Доски» применяется
@@ -1082,10 +1206,10 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         # ВАЖНО: сам ФАКТ выбора сервера в списке (без чекбокса и без
         # композиции) НЕ включает MCP-режим.
         via_mcp = bool(_ServerState.mcp_enabled or target_is_board)
-        # ВАЖНО: /help — ЯВНАЯ команда ассистента разработчика. Она не должна
+        # ВАЖНО: /help и /review — ЯВНЫЕ команды. Они не должны
         # перехватываться MCP-режимом, «Доской» или композицией: иначе вместо
-        # справки по проекту вернётся таблица MCP-сервера.
-        if is_help:
+        # справки/ревью вернётся таблица MCP-сервера.
+        if is_help or is_review:
             via_mcp = False
 
         # РЕЖИМ ОТВЕТА зависит от наличия персон:
@@ -1111,13 +1235,50 @@ class WebRequestHandler(BaseHTTPRequestHandler):
             # Персон нет (или запрос идёт через MCP) — режим «напрямую».
             answer_title = None
             profile = None
-            if selected is None and not via_mcp and not is_help:
+            # ЛОКАЛЬНАЯ МОДЕЛЬ ПО УМОЛЧАНИЮ: если её сервер запущен через блок
+            # «Локальная модель», а пользователь не выбрал модель/персону и не
+            # включил MCP — используем локальную (и для /help, и для чата).
+            if selected is None and not via_mcp:
+                local_label = _running_local_label()
+                if local_label:
+                    try:
+                        _sync_agent_local()
+                    except Exception as exc:         # noqa: BLE001
+                        print("[LOCAL] синхронизация агента: %s" % exc,
+                              flush=True)
+                    selected = [{"label": local_label}]
+                    print("[LOCAL] по умолчанию используется %r (%s)"
+                          % (local_label, "запущена"), flush=True)
+            if selected is None and not via_mcp and not is_help and not is_review:
                 return self._send_json(200, {
                     "ok": False,
                     "error": "Не выбрана ни одна модель. Включите модель для "
                              "запроса.",
                     "text": "", "html": "", "answers": [],
                 })
+
+        # /review: AI-ревью PR/диффа прямо в чате (модель обязательна).
+        if is_review:
+            model_label = ""
+            if selected:
+                model_label = str((selected[0] or {}).get("label")
+                                  or "").strip()
+            if not model_label:
+                model_label = _running_local_label()
+            if not model_label:
+                return self._send_json(200, {
+                    "ok": False, "review": True,
+                    "error": "Выберите модель (или запустите локальную) — "
+                             "иначе /review не сможет выполнить ревью.",
+                    "text": "", "html": "", "answers": [],
+                })
+            repo_dir = (self.session.rag_settings().get("docs_dir")
+                        or config.RAG_DOCS_DIR)
+            print("[REVIEW] %s..%s repo=%r model=%r"
+                  % (review_spec["base"], review_spec["head"], repo_dir,
+                     model_label), flush=True)
+            return self._send_json(200, self._review_payload(
+                review_spec, model_label, repo_dir))
 
         # Глобальное ограничение max_tokens (None — не применяется)
         max_tokens = data.get("max_tokens")

@@ -1332,12 +1332,15 @@ class Agent:
         return "", ""
 
     def _chat_text(self, provider, model, messages, temperature=None,
-                   max_tokens=None):
+                   max_tokens=None, disable_thinking=False):
         """Вызывает одну модель и возвращает её ответ (dict с content/tokens).
 
         Единая точка для вспомогательных LLM-операций (состояние задачи,
         summary, facts): выбирает провайдера по имени. Исключения всплывают
         наружу — вызывающий код обрабатывает их сам.
+
+        disable_thinking — только для local: не тратить max_tokens на
+        reasoning_content (см. local_llm.chat).
         """
         if provider == "deepseek":
             return deepseek.chat(self.api_key, messages, model=model,
@@ -1349,7 +1352,8 @@ class Agent:
             return local_llm.chat(messages, model=name or config.LOCAL_LABEL,
                                   base_url=url, api_key=config.LOCAL_API_KEY,
                                   temperature=temperature,
-                                  max_tokens=max_tokens)
+                                  max_tokens=max_tokens,
+                                  disable_thinking=disable_thinking)
         return gigachat.chat(messages, model=model,
                              temperature=temperature, max_tokens=max_tokens)
 

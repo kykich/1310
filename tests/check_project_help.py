@@ -11,6 +11,7 @@
 Запуск: python -m tests.check_project_help
 """
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -151,6 +152,33 @@ def test_project_server():
         repo=os.path.join(tempfile.gettempdir(), "no_git_repo_xyz"))
     check("repo без .git — заглушка «Нет данных о GIT»",
           missing.startswith(project_server.NO_GIT_TEXT))
+
+    # Linked worktree: .git — файл (gitdir: ...), а не папка.
+    wt_repo = tempfile.mkdtemp(prefix="wt_repo_")
+    wt_path = wt_repo + "_wt"
+    env = dict(os.environ)
+    env.update({"GIT_AUTHOR_NAME": "Test", "GIT_COMMITTER_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "test@example.com",
+                "GIT_COMMITTER_EMAIL": "test@example.com"})
+
+    def _run(*args):
+        proc = subprocess.run(["git", "-C", wt_repo] + list(args),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              env=env, check=False)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.decode("utf-8", "replace"))
+
+    _run("init")
+    with open(os.path.join(wt_repo, "README.md"), "w",
+              encoding="utf-8") as fh:
+        fh.write("# worktree test\n")
+    _run("add", "-A")
+    _run("commit", "-m", "init")
+    _run("worktree", "add", "-b", "wtbranch", wt_path)
+    wt_branch = project_server.git_branch(repo=wt_path)
+    check("worktree (.git-файл) — ветка найдена", "ветка: wtbranch" in wt_branch)
+    check("worktree — корень репозитория определён",
+          "репозиторий:" in wt_branch)
 
 
 def test_help_parse():
@@ -314,6 +342,69 @@ def test_tool_defaults():
           apply_tool_defaults("git_status", {}, None) == {})
 
 
+def test_local_default():
+    section("11. Локальная модель по умолчанию (блок UI)")
+    orig_mgr_fn = web_server._local_manager
+    saved_agent = web_server._ServerState.agent
+
+    class _Mgr(object):
+        def __init__(self):
+            self.running = True
+            self.ready = True
+
+        def is_running(self):
+            return self.running
+
+        def status(self):
+            return {"ready": self.ready, "models": ["Local"],
+                    "url": "http://127.0.0.1:8080/v1"}
+
+        def load_settings(self):
+            return {"enabled": False,
+                    "params": {"port": 8080, "model": r"e:\m\q.gguf"}}
+
+    class _Agent(object):
+        def __init__(self):
+            self.args = None
+
+        def set_local_model(self, url=None, model=None, label=None):
+            self.args = (url, model, label)
+
+    mgr = _Mgr()
+    web_server._local_manager = lambda: mgr
+    try:
+        check("сервер готов -> метка Local",
+              web_server._running_local_label() == "Local")
+        mgr.running = False
+        check("сервер не запущен -> пусто",
+              web_server._running_local_label() == "")
+        mgr.running = True
+        mgr.ready = False
+        check("сервер не готов -> пусто",
+              web_server._running_local_label() == "")
+
+        # Запущенный сервер добавляет источник Local даже при enabled=false
+        # (модель поднята через блок UI — должна использоваться).
+        mgr.ready = True
+        agent = _Agent()
+        web_server._ServerState.agent = agent
+        web_server._sync_agent_local()
+        check("running+enabled=false -> Local добавлен",
+              agent.args is not None
+              and agent.args[0] == "http://127.0.0.1:8080/v1")
+        check("имя модели из /v1/models", agent.args[1] == "Local")
+
+        mgr.running = False
+        agent2 = _Agent()
+        web_server._ServerState.agent = agent2
+        web_server._sync_agent_local()
+        check("не запущена и не включена -> источник убран",
+              agent2.args is not None and agent2.args[0] is None)
+    finally:
+        web_server._local_manager = orig_mgr_fn
+        web_server._ServerState.agent = saved_agent
+
+
 def main():
     ensure_utf8()
     test_doc_selection()
@@ -326,6 +417,7 @@ def main():
     test_search_scope()
     test_git_stub()
     test_tool_defaults()
+    test_local_default()
     finish()
 
 

@@ -213,19 +213,25 @@ import { apiGet, apiPost } from "./core/api.js";
     function buildModelControls(available) {
         if (!modelBox) return;
         modelBox.innerHTML = "";
-        // По умолчанию модели ВЫКЛЮЧЕНЫ: пользователь сам включает нужные.
+        // По умолчанию модели ВЫКЛЮЧЕНЫ; локальная модель (если её сервер
+        // запущен) включается автоматически — она используется по умолчанию.
         modelState = available.map(function (m) {
             return {
-                label: m.label, cls: m.cls || "", on: false,
+                label: m.label, cls: m.cls || "", local: !!m.local,
+                on: false,
                 temp: DEFAULT_TEMP, topP: DEFAULT_TOP_P,
                 repPen: DEFAULT_REP_PENALTY,
                 maxTokens: null,        // null = «авто» (пустое поле)
                 ctxWin: null            // null = «авто» (пустое поле)
             };
         });
+        var localState0 = modelState.find(function (m) { return m.local; });
+        if (localState0) {
+            localState0.on = true;
+        }
         modelState.forEach(function (st) {
             var wrap = document.createElement("div");
-            wrap.className = "model-ctrl inactive";
+            wrap.className = "model-ctrl " + (st.on ? "active" : "inactive");
             wrap.dataset.label = st.label;
 
             // кнопка с названием модели
@@ -263,6 +269,7 @@ import { apiGet, apiPost } from "./core/api.js";
 
             modelBox.appendChild(wrap);
         });
+        modelState.forEach(function (st) { syncModelUI(st.label); });
         updateModelTag();
     }
 
@@ -1641,11 +1648,12 @@ import { apiGet, apiPost } from "./core/api.js";
         var compositionActive = !!(mcpState && mcpState.composition);
         var mcpReady = compositionActive || doskaSelected ||
             !!(mcpState && mcpState.enabled && (mcpState.model || mcpState.available));
-        // КОМАНДА /help (ассистент разработчика): работает без выбранной
-        // модели/персоны — сервер вернёт детерминированную справку о проекте
-        // (git-ветка, структура, найденные фрагменты документации/кода).
+        // КОМАНДА /help (ассистент разработчика) и /review (AI-ревью PR)
+        // работают без выбранной модели/персоны: сервер вернёт либо
+        // детерминированную справку, либо понятную ошибку/ревью.
         var isHelp = /^\s*\/help\b/i.test(question);
-        if (!isHelp && !hasActiveProfile() && !hasSelectedModel() && !mcpReady) {
+        var isReview = /^\s*\/review\b/i.test(question);
+        if (!isHelp && !isReview && !hasActiveProfile() && !hasSelectedModel() && !mcpReady) {
             setStatus("Выберите модель или создайте персону.", "error");
             return;
         }
@@ -1684,6 +1692,18 @@ import { apiGet, apiPost } from "./core/api.js";
                 });
             }
             if (!data.ok) {
+                // /review: ошибка (нет изменений, нет модели) приходит с
+                // готовым текстом — показываем её карточкой в чате, а не
+                // только в строке статуса.
+                if (data.review && data.text) {
+                    items.push({ role: "user", content: question });
+                    items.push({ role: "assistant", content: data.text,
+                                 html: data.html || "",
+                                 answers: data.answers || [] });
+                    render();
+                    setStatus("Ревью не выполнено — причина в сообщении.", "error");
+                    return;
+                }
                 render();
                 setStatus(data.error || "Произошла ошибка.", "error");
                 return;
@@ -1802,25 +1822,30 @@ import { apiGet, apiPost } from "./core/api.js";
     var newchatBtn = document.getElementById("newchat");
     if (newchatBtn) newchatBtn.addEventListener("click", startNewChat);
 
-    // Загружаем список доступных моделей и строим панель выбора.
-    fetch("/api/model")
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (d) {
-            if (!d) return;
-            if (d.available && d.available.length) {
-                availableLabels = d.available.map(function (m) { return m.label; });
-                buildModelControls(d.available);
-            } else if (d.models && d.models.length) {
-                availableLabels = d.models.slice();
-                buildModelControls(d.models.map(function (l) {
-                    return { label: l, cls: "" };
-                }));
-            }
-            fillProfileModelSelect(availableLabels);
-            fillMcpModelSelect(availableLabels);
-            renderModelStats();
-        })
-        .catch(function () {});
+    // Загружает список доступных моделей и строит панель выбора.
+    // Вызывается при старте страницы и при изменении состояния локальной
+    // модели (запуск/остановка), чтобы «Local» появлялся/исчезал сразу.
+    function refreshModels() {
+        return fetch("/api/model")
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+                if (!d) return;
+                if (d.available && d.available.length) {
+                    availableLabels = d.available.map(function (m) { return m.label; });
+                    buildModelControls(d.available);
+                } else if (d.models && d.models.length) {
+                    availableLabels = d.models.slice();
+                    buildModelControls(d.models.map(function (l) {
+                        return { label: l, cls: "" };
+                    }));
+                }
+                fillProfileModelSelect(availableLabels);
+                fillMcpModelSelect(availableLabels);
+                renderModelStats();
+            })
+            .catch(function () {});
+    }
+    refreshModels();
 
 
     // ------------------------------------------------------------------
@@ -2433,6 +2458,7 @@ import { apiGet, apiPost } from "./core/api.js";
     // Применяет состояние блока локальной модели, пришедшее от сервера.
     function applyLocalState(d) {
         if (!d) return;
+        var wasRunning = localState.running;
         localState.enabled = !!d.enabled;
         localState.root = d.root || "";
         localState.server_path = d.server_path || "";
@@ -2489,6 +2515,11 @@ import { apiGet, apiPost } from "./core/api.js";
             if (localFlashEl && s.flash_attn) localFlashEl.value = s.flash_attn;
         }
         renderLocalStatus();
+        // Запустили/остановили локальный сервер — обновляем список моделей
+        // (Local появляется/исчезает) и он включается по умолчанию.
+        if (wasRunning !== localState.running) {
+            refreshModels();
+        }
         refreshSections();
     }
 

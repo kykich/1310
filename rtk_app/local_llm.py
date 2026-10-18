@@ -46,8 +46,18 @@ def _estimate_tokens(text):
     return max(1, len(str(text or "")) // 3)
 
 
+def _post_chat(url, payload, headers, timeout):
+    """Один POST к локальному /chat/completions; возвращает JSON-ответ."""
+    req = urllib.request.Request(
+        url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def chat(messages, model=None, base_url=None, api_key=None, temperature=None,
-         max_tokens=None, timeout=None, top_p=None, repetition_penalty=None):
+         max_tokens=None, timeout=None, top_p=None, repetition_penalty=None,
+         disable_thinking=False):
     """Отправляет сообщения локальному серверу и возвращает ответ.
 
     Возвращает dict: content, prompt_tokens, completion_tokens — как у
@@ -56,6 +66,12 @@ def chat(messages, model=None, base_url=None, api_key=None, temperature=None,
 
     top_p, repetition_penalty — дополнительные параметры генерации
     (передаются локальному серверу, если заданы).
+
+    disable_thinking — попросить reasoning-модель (Qwen3.5 и т.п.) не тратить
+    max_tokens на reasoning_content. llama.cpp понимает
+    ``chat_template_kwargs={"enable_thinking": false}``; если сервер этот
+    параметр не принимает, запрос повторяется без него. Без флага retry
+    выполняется автоматически, только если content пуст, а reasoning есть.
     """
     url = _chat_url(base_url)
     payload = {"model": model or config.LOCAL_LABEL,
@@ -72,23 +88,43 @@ def chat(messages, model=None, base_url=None, api_key=None, temperature=None,
     key = str(api_key or "").strip()
     if key:
         headers["Authorization"] = "Bearer " + key
-    req = urllib.request.Request(
-        url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers=headers, method="POST")
-    with urllib.request.urlopen(
-            req, timeout=timeout or config.LOCAL_TIMEOUT) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    content = data["choices"][0]["message"]["content"]
-    usage = data.get("usage") or {}
-    p_tok = int(usage.get("prompt_tokens", 0) or 0)
-    c_tok = int(usage.get("completion_tokens", 0) or 0)
-    if not p_tok and not c_tok:
-        # Локальный сервер мог не вернуть usage — оцениваем по длине.
-        p_tok = _estimate_tokens(" ".join(str(m.get("content", ""))
-                                          for m in messages))
-        c_tok = _estimate_tokens(content)
-    return {"content": content, "prompt_tokens": p_tok,
-            "completion_tokens": c_tok}
+    timeout = timeout or config.LOCAL_TIMEOUT
+
+    # Сначала — режим, запрошенный вызывающим; при пустом content пробуем
+    # второй режим (для disable_thinking=False это как раз отключение
+    # reasoning, для True — откат на обычный запрос).
+    modes = [True, False] if disable_thinking else [False, True]
+    last = {"content": "", "prompt_tokens": 0, "completion_tokens": 0}
+    for index, mode in enumerate(modes):
+        body = dict(payload)
+        if mode:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        try:
+            data = _post_chat(url, body, headers, timeout)
+        except urllib.error.HTTPError:
+            if index == 0 and len(modes) > 1:
+                continue
+            raise
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        content = str(message.get("content") or "").strip()
+        reasoning = str(message.get("reasoning_content") or "")
+        usage = data.get("usage") or {}
+        p_tok = int(usage.get("prompt_tokens", 0) or 0)
+        c_tok = int(usage.get("completion_tokens", 0) or 0)
+        if not p_tok and not c_tok:
+            # Локальный сервер мог не вернуть usage — оцениваем по длине.
+            p_tok = _estimate_tokens(" ".join(str(m.get("content", ""))
+                                              for m in messages))
+            c_tok = _estimate_tokens(content)
+        last = {"content": content, "prompt_tokens": p_tok,
+                "completion_tokens": c_tok}
+        if content:
+            return last
+        # content пуст: reasoning-модель израсходовала лимит на размышления.
+        if index == 0 and len(modes) > 1 and reasoning:
+            continue
+    return last
 
 
 def list_models(base_url=None, timeout=5):

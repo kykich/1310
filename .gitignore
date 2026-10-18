@@ -73,3 +73,5 @@ docs_rag/
 last_resp.json
 sess.json
 
+# --- AI-ревью PR (review_pr.py / GitHub Action) ---
+review.md

@@ -69,7 +69,10 @@ def _resolve_repo(repo=""):
         return None
     cur = start
     while True:
-        if os.path.isdir(os.path.join(cur, ".git")):
+        dot_git = os.path.join(cur, ".git")
+        # В обычном репозитории .git — папка, в linked worktree — файл
+        # (gitdir: ...). Оба варианта означают корень репозитория.
+        if os.path.isdir(dot_git) or os.path.isfile(dot_git):
             return cur
         parent = os.path.dirname(cur)
         if parent == cur:
