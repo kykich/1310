@@ -27,6 +27,10 @@
   скобках (`документ#стр.P/chunk.C` для PDF, `README.md#chunk.3` для текста),
   цитаты из источника выделяются жёлтым, а при релевантности ниже порога
   ассистент честно отвечает «не знаю» и просит уточнение.
+- **AI-ревью pull request** (`docs/Final_task.md`, задача 2): пайплайн
+  `review_pr.py` + GitHub Action собирает diff и изменённые файлы, подмешивает
+  контекст RAG (документация + код) и публикует в PR ревью с потенциальными
+  багами, архитектурными проблемами и рекомендациями.
 - **Команда `/help` — ассистент разработчика** (`docs/Final_task.md`): вопрос
   после `/help` ищется по документации и коду проекта, в контекст добавляется
   текущая git-ветка (MCP-сервер «Проект»). Без выбранной модели возвращается
@@ -357,11 +361,106 @@ RAG_DOC_SKIP_FILES = ("apidpsk.txt", "gigakey.txt", ...)  # секреты не 
 - В MCP-режиме git-инструменты (`git_status`, `git_diff`, `list_files`,
   `git_branch`) получают `repo=<docs_dir>` автоматически — работают с
   проиндексированным проектом, а не с репозиторием ассистента.
+- **Локальная модель по умолчанию.** Если сервер запущен через блок
+  «Локальная модель», источник `Local` автоматически включается в селекторе и
+  используется, даже когда модель не выбрана вручную — в том числе для
+  `/help` (ответ даёт модель с опорой на RAG и git). При остановке сервера
+  `Local` исчезает из списка. Явный выбор любой из моделей
+  (`DeepSeek-flash`, `GigaChat`, `Local`) по-прежнему работает.
 - Если выбрана модель или персона — отвечает она, опираясь на найденные
   фрагменты; в карточке ответа видны «Источники» со ссылками.
 - Если модель не выбрана — возвращается **детерминированная справка** (без
   вызова LLM): ветка, структура каталогов, состояние индекса и до 5 найденных
   фрагментов. Так `/help` работает даже без ключей API.
+
+## AI-ревью pull request (`docs/Final_task.md`, задача 2)
+
+Пайплайн автоматического ревью PR: собирает diff и список изменённых файлов,
+подмешивает контекст проекта из RAG (документация + код) и просит модель
+вернуть Markdown с разделами **«Потенциальные баги»**, **«Архитектурные
+проблемы»** и **«Рекомендации»**.
+
+**Локально:**
+
+```bash
+python review_pr.py --base HEAD~1 --head HEAD --no-rag --out review.md
+python review_pr.py --base origin/master --head HEAD --build-index --out review.md
+python review_pr.py --base HEAD~1 --head HEAD --model GigaChat
+```
+
+`--build-index` строит RAG-индекс по текущей папке (README, `docs/`, код,
+PDF). Если индекс или эмбеддинги недоступны — ревью выполняется без RAG, а
+причина указывается в шапке комментария.
+
+**Локальная модель.** Ревью может выполнять локальный OpenAI-совместимый
+сервер (llama.cpp `llama-server`, Ollama, LM Studio) — ключи облачных API не
+нужны:
+
+```bash
+python review_pr.py --base HEAD~1 --head HEAD \
+  --local-url http://127.0.0.1:8080/v1 --local-model qwen2.5-coder \
+  --model Local --out review.md
+```
+
+- `--model Local` — метка локальной модели (`--local-label`, по умолчанию
+  `Local`); неизвестная метка даёт понятную ошибку, без тихой подмены на
+  GigaChat.
+- **Автоопределение:** если `--local-url` не указан, CLI читает
+  `session/local_model.json` (настройки блока «Локальная модель») и проверяет
+  `/v1/models`. При `--model Local` найденная запущенная модель используется
+  обязательно (если сервер не отвечает — понятная ошибка); при пустом
+  `--model` — используется, когда блок включён (`enabled: true`).
+- `--local-url` можно задать через env `REVIEW_LOCAL_URL`, имя модели —
+  `REVIEW_LOCAL_MODEL`, метку — `REVIEW_LOCAL_LABEL`.
+- RAG-эмбеддинги считает **Ollama** (`nomic-embed-text-v2-moe`) — это
+  отдельный сервис; без него ревью идёт без RAG.
+- **Reasoning-модели** (Qwen3.5 и подобные): для ревью thinking отключается
+  (`chat_template_kwargs.enable_thinking=false`), иначе модель тратит весь
+  `max_tokens` на `reasoning_content` и возвращает пустой `content`.
+- Для Local diff автоматически ограничивается под контекст модели
+  (`local_review_diff_limit`, ctx из `session/local_model.json`): иначе
+  llama-server с ctx 8192 отвечает 400 на большой diff. В шапке появляется
+  «diff обрезан по лимиту».
+- В GitHub Actions локальная модель доступна только на **self-hosted**
+  runner: на github-hosted раннере вашего llama-server нет.
+
+**В чате (команда `/review`).** Ревью запускается прямо из окна чата:
+
+```
+/review                     # последний коммит: HEAD~1..HEAD
+/review origin/master HEAD  # произвольные ревизии
+/review --no-rag            # без RAG-контекста (быстрее)
+```
+
+- Репозиторий берётся из `docs_dir` (поле `docs:` в блоке RAG) — если там нет
+  git-репозитория, `/review` вернёт ошибку с подсказкой.
+- Ревьюятся **коммиты**, а не рабочая копия: по умолчанию `HEAD~1...HEAD`.
+  Если `base` и `head` совпадают (`/review origin/master`, когда
+  `origin/master == HEAD`), вернётся ошибка «Нет изменений…» с названием
+  общего коммита и подсказкой `/review HEAD~1 HEAD` — без вызова модели.
+- Модель — выбранная в селекторе, модель персоны или запущенная локальная;
+  если ничего не выбрано, команда попросит выбрать модель.
+- Команда не перехватывается MCP/«Доской»; результат приходит в чат
+  Markdown-карточкой (все три раздела), рядом — список изменённых файлов.
+
+**GitHub Actions:** `.github/workflows/ai-review.yml` запускается на
+`pull_request` (`opened`, `synchronize`, `reopened`). Секреты репозитория:
+`DEEPSEEK_API_KEY` (основная модель) или `GIGACHAT_KEY`. Workflow:
+
+1. checkout с полной историей; diff `base...head` по SHA из события PR;
+2. установка зависимостей; `apidpsk.txt`/`gigakey.txt` создаются из секретов;
+3. (опционально) Ollama + `nomic-embed-text-v2-moe` — шаг
+   `continue-on-error`: без него ревью идёт без RAG;
+4. запуск `review_pr.py`, артефакт `ai-review` и комментарий в PR
+   (`permissions: pull-requests: write`).
+
+Ограничения: diff > 120 000 символов обрезается; каждый push добавляет новый
+комментарий; ревью — рекомендация, а не блокирующая проверка.
+
+Пошаговая инструкция проверки (тесты, CLI на сторонних репозиториях, RAG,
+локальная модель, GitHub Action) — `docs/VERIFY_task2.md`.
+Проверка на четырёх версиях проекта (ветки `v1009`/`v1210`/`v2309`/`v3108`) —
+`docs/VERIFY_versions.md`.
 
 ## Структура проекта
 
@@ -378,6 +477,10 @@ RAG_DOC_SKIP_FILES = ("apidpsk.txt", "gigakey.txt", ...)  # секреты не 
 ├── zavhoz_server.py     # MCP-сервер «Завхоз» (сохранение пар в JSON)
 ├── doska_server.py      # MCP-сервер «Доска» (таблица событие ↔ время)
 ├── project_server.py    # MCP-сервер «Проект» (git branch/status/diff, файлы)
+├── review_pr.py         # CLI AI-ревью PR: diff + RAG -> review.md
+├── .github/
+│   └── workflows/
+│       └── ai-review.yml  # GitHub Action: AI-ревью на pull_request
 ├── ya.txt               # учётные данные календаря (в .gitignore)
 ├── exch.txt             # API-ключ ExchangeRate-API (для «Замполита», .gitignore)
 ├── w.txt                # API-ключ OpenWeatherMap (в .gitignore)
@@ -386,6 +489,7 @@ RAG_DOC_SKIP_FILES = ("apidpsk.txt", "gigakey.txt", ...)  # секреты не 
 ├── rtk_app/             # серверная логика
 │   ├── agent.py         # АГЕНТ: отдельная сущность, вся логика запросов к LLM
 │   ├── rag.py           # RAG: индексация PDF/docs/кода, гибридный поиск, порог
+│   ├── pr_review.py     # AI-ревью PR: diff -> RAG -> модель -> Markdown
 │   ├── rag_llm.py       # RAG: LLM-части 2-го этапа (query rewrite, реранкер)
 │   ├── local_server.py  # ЛОКАЛЬНАЯ модель: скан папки, автоподбор и запуск llama-server
 │   ├── local_llm.py     # ЛОКАЛЬНАЯ модель: клиент OpenAI-совместимого /v1
@@ -409,6 +513,10 @@ RAG_DOC_SKIP_FILES = ("apidpsk.txt", "gigakey.txt", ...)  # секреты не 
 │   ├── task_rag_rank.md # улучшенный поиск RAG (2-й этап)
 │   ├── Final_task.md    # итоговое ТЗ (4 задачи: RAG+/help, PR-ревью, поддержка, файлы)
 │   ├── REPORT_task6_traceability.md # трассировка Final_task (задача 1) → код → тест
+│   ├── REPORT_task7_traceability.md # трассировка Final_task (задача 2, PR-ревью) → код → тест
+│   ├── VERIFY_task2.md  # пошаговая проверка AI-ревью PR (тесты, CLI, RAG, Action)
+│   ├── VERIFY_versions.md # проверка RAG, /help и /review на 4 версиях
+│   ├── session-handoff.md # передача состояния: сделано/проверено/следующие шаги
 │   └── REPORT_task_traceability.md  # трассировка требований ТЗ → код → тест
 ├── requirements.txt     # единственная зависимость — mcp (опционально)
 ├── apidpsk.txt          # файл с API-ключом (НЕ загружается на GitHub)
@@ -436,6 +544,7 @@ python tests/check_rag.py              # базовый RAG (чанки, инд�
 python tests/check_rag_rank.py          # улучшенный RAG (гибрид/порог/rewrite/реранк)
 python tests/check_rag_citations.py     # источник/chunk_id, жёлтые цитаты, «не знаю»
 python tests/check_project_help.py      # RAG по docs/коду, git-инструменты, /help
+python tests/check_pr_review.py         # AI-ревью PR: diff, RAG, промпт, формат
 ```
 
 Каждый тест печатает `[OK]`/`[FAIL]` по проверкам и строку

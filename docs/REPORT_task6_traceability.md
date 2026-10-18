@@ -26,7 +26,7 @@
 
 ```bash
 # 1. Автономные тесты (без сети, Ollama и LLM)
-python -m tests.check_project_help     # 46 проверок
+python -m tests.check_project_help     # 79 проверок
 python -m tests.check_rag              # 54
 python -m tests.check_rag_rank         # 55
 python -m tests.check_rag_citations    # 38
@@ -53,7 +53,7 @@ python rtk_web.py 8123
 
 | Проверка | Результат |
 |---|---|
-| `tests/check_project_help.py` | 71 OK, 0 FAIL |
+| `tests/check_project_help.py` | 79 OK, 0 FAIL |
 | `tests/check_rag.py` / `check_rag_rank` / `check_rag_citations` | 54 / 55 / 38 OK, 0 FAIL |
 | Остальные наборы (context, memory, strategies, jobs, reminders, composition, weather, auto_compact, server_context) | все зелёные (~200 проверок) |
 | Индексация корня проекта (`G:\9potok\1310`) | **68 файлов, 1919 чанков, 0 ошибок**, 183 с |
@@ -64,7 +64,9 @@ python rtk_web.py 8123
 | MCP-клиент | `mcp_call_tool('git_branch', server_id='project')` → `ok=true`, ветка/HEAD/upstream/10 изменённых файлов |
 | Область поиска (e2e) | индекс с двумя папками: `/help` при `docs_dir=<другая папка>` вернул только её фрагмент (маркер `ZZOTHERPROJECTZZ`), без содержимого 1310; после возврата `docs_dir=G:\9potok\1310` — только фрагменты 1310, маркер другой папки не найден |
 | `/help` при включённом MCP | команда не перехватывается «Доской»/MCP: `help=true`, git-ветка и структура проекта |
+| Локальная модель по умолчанию | при запущенном сервере `_running_local_label()` → `Local`, источник добавляется в агент (`running` без `enabled`), `/help` и чат идут через локальную модель; при остановке — детерминированная справка |
 | Нет git в целевой папке | `git_branch(repo=<папка без .git>)` → «Нет данных о GIT: папка … не является git-репозиторием»; `/help` показывает заглушку **«Нет данных о GIT»** без fallback на репозиторий ассистента |
+| Linked worktree (`.git` — файл) | `project_server._resolve_repo` принимает и папку `.git`, и файл; `/help` на `test1310\versions\1009` → `ветка: v1009`, HEAD `d4d8fc6`, репозиторий — сам worktree |
 | MCP-ветка (git_status/diff/files) | сервер передаёт `tool_defaults={"repo": docs_dir}` в `Agent.answer_via_mcp`; `apply_tool_defaults` подставляет `repo` только git-инструментам, явный `repo` сохраняется; `git_status({"repo": <папка без git>})` → «Нет данных о GIT» |
 
 Дополнительно исправлен рендер: подчёркивания в inline-коде больше не
@@ -93,6 +95,11 @@ python rtk_web.py 8123
 - `/help` — явная команда: она **не перехватывается** режимом MCP,
   «Доской» или композицией (иначе вместо справки возвращалась таблица
   MCP-сервера).
+- **Локальная модель по умолчанию:** если сервер запущен через блок
+  «Локальная модель», `/help` и чат используют `Local` автоматически (даже без
+  выбранной модели); при остановке сервера — снова детерминированная справка
+  или выбранная облачная модель. В селекторе `Local` включается сам после
+  запуска и исчезает после остановки.
 - В `/help` намеренно **не выполняются** query rewrite и LLM-реранкер: справка
   должна быть быстрой и воспроизводимой; для обычных вопросов 2-й этап RAG
   работает как раньше.
