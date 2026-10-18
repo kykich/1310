@@ -34,7 +34,7 @@ AI-ревью PR: diff + RAG → баги/архитектура/рекомен�
 | Задача | Статус | Где смотреть |
 |---|---|---|
 | 1. RAG по README/`docs`/коду + MCP git + `/help` | **Готово**, закоммичено (`e8c8308`) | `docs/REPORT_task6_traceability.md`, README |
-| 2. AI-ревью PR (diff + RAG → 3 раздела, GitHub Action, `/review`) | **Готово в рабочей копии**, не закоммичено | `docs/REPORT_task7_traceability.md`, `docs/VERIFY_task2.md` |
+| 2. AI-ревью PR (diff + RAG → 3 раздела, GitHub Action, `/review`) | **Готово**: код/доки в `6cc961c`, `fb70372` (на GitHub); workflow — локальный `7b4b2b6`, ждёт `workflow`-scope PAT | `docs/REPORT_task7_traceability.md`, `docs/VERIFY_task2.md` |
 | 3. Мини-сервис поддержки (FAQ + тикеты + CRM/MCP) | **Не начато** | `docs/Final_task.md`, задача 3 |
 | 4. Ассистент по файлам проекта (чтение/поиск/изменение) | **Не начато** | `docs/Final_task.md`, задача 4 |
 
@@ -124,37 +124,25 @@ AI-ревью PR: diff + RAG → баги/архитектура/рекомен�
 origin  https://github.com/kykich/1310.git
 r1210   https://github.com/kykich/1210.git
 
-* master e8c8308 [origin/master] feat(rag): RAG по docs/коду, команда /help и MCP-сервер «Проект»
+* 7b4b2b6 (master, ahead 1) ci(review): GitHub Action AI-ревью PR
+* fb70372 (origin/master) docs: AI-ревью, /review, Local и тестовый стенд
+* 6cc961c feat(review): AI-ревью PR (diff + RAG), команда /review и Local
+* e8c8308 feat(rag): RAG по docs/коду, команда /help и MCP-сервер «Проект»
   r1210/feature/rag-help -> e8c8308   (пуш в kykich/1210 выполнен)
 ```
 
-`e8c8308` уже отправлен в `origin/master` и в ветку `feature/rag-help`
-репозитория `kykich/1210`.
+`6cc961c` и `fb70372` отправлены в `origin/master`
+(`e8c8308..fb70372`). Рабочее дерево чистое.
 
-**Не закоммичено (задача 2 + правки задачи 1):**
+Коммит `7b4b2b6` (`.github/workflows/ai-review.yml`) **локальный**:
+HTTPS-токен без scope `workflow` не даёт GitHub создать workflow-файл.
+После обновления токена — `git push origin master`.
 
-```
- M .gitignore
- M README.md
- M docs/REPORT_task6_traceability.md
- M js/app.js
- M project_server.py
- M rtk_app/agent.py
- M rtk_app/local_llm.py
- M tests/check_project_help.py
- M web/server.py
-?? .github/
-?? docs/REPORT_task7_traceability.md
-?? docs/VERIFY_task2.md
-?? docs/VERIFY_versions.md
-?? docs/session-handoff.md   (этот файл)
-?? review_pr.py
-?? rtk_app/pr_review.py
-?? tests/check_pr_review.py
-```
+Ветка `backup/task2-full-push` (`f69dbb5`) — резервная копия исходных двух
+коммитов, включавших workflow.
 
 Тестовый стенд `G:\9potok\test1310\versions.git` и `versions\*` лежит **вне**
-репозитория `1310` и в коммит не входит.
+репозитория `1310` и в коммиты не входит.
 
 Отдельно: рабочая копия `G:\9potok\test1310\1210` (сторонний репозиторий для
 проверки) сейчас **грязная** — там свои изменения `docs/Final_task.md`,
@@ -191,7 +179,7 @@ r1210   https://github.com/kykich/1210.git
 | Индекс | `session/rag_index.db` (~58 MB): **635 файлов, 16 231 чанк, 0 изображений**; версии стенда: `versions\1009` — 19 / 335, `1210` — 71 / 2 143, `2309` — 50 / 1 346, `3108` — 2 / 23; также `G:\9potok\1210\` — 75 / 2 212, `test1310` — 220 / 6 107, `1310` — 74 / 2 116, `SKR_PRO` — 124 / 1 949 |
 | Локальная модель | `session/local_model.json`: `enabled=true`, `Qwen3.5-9B-Q6_K.gguf`, `ctx=8192`, `ngl=99`, `threads=16`, `port=8080` |
 | MCP | `session/mcp.json`: `enabled=true`, `model=Local`, `server=project`, `composition=false` |
-| Процессы | `rtk_web` запущен на **8123** (после правки 18.10), `llama-server` — на **8080**, Ollama — на `11434`; порт **8000 свободен** |
+| Процессы | `rtk_web` и `llama-server` **остановлены** (18.10); порты **8000/8080/8123 свободны**; Ollama работает на `11434` |
 
 `docs_dir` сейчас указывает на **git-репозиторий** `g:\9potok\1210\`
 (ветка `master`, HEAD `648cf70`) — `/review` по умолчанию сравнивает
@@ -291,7 +279,7 @@ python review_pr.py --repo G:\9potok\test1310\1210 `
 | `/review v1009 v1210` | 79 файлов, diff обрезан лимитом 120 000 символов (ожидаемо) |
 | `/help` с локальной моделью | ответила `Local` (автоопределение через `/v1/models`), без `--local-url` |
 | `--model Local` без запущенного сервера | понятная ошибка, без подмены GigaChat |
-| GitHub Action на реальном PR | **не проверялся** (workflow ещё не в удалённой базовой ветке) |
+| GitHub Action на реальном PR | **не проверялся**: workflow в локальном `7b4b2b6`, ждёт push с `workflow`-scope PAT |
 
 Для длинных диффов использовать `--max-tokens 8000`: при 4000 ответ
 обрезается.
@@ -300,16 +288,18 @@ python review_pr.py --repo G:\9potok\test1310\1210 `
 
 ## 8. Известные проблемы и риски
 
-1. **GitHub Action не проверен вживую.** Workflow лежит только в рабочей
-   копии; чтобы он сработал, файл должен быть в базовой ветке PR, а в
-   настройках репозитория — секрет `DEEPSEEK_API_KEY`/`GIGACHAT_KEY`.
+1. **Workflow не отправлен в GitHub.** Коммит `7b4b2b6` локальный: PAT без
+   scope `workflow` не может создать `.github/workflows/ai-review.yml`.
+   Обновить токен (classic: `workflow`; fine-grained: Workflows Read/write),
+   затем `git push origin master`. После этого проверить Action на PR и
+   добавить секрет `DEEPSEEK_API_KEY`/`GIGACHAT_KEY`.
 2. **`docs_dir` должен указывать на git-репозиторий.** Сейчас это
    `g:\9potok\1210\` (корректно). Если поставить родительскую папку
    `g:\9potok\test1310\` (без `.git`), `/help` останется без git-данных, а
    `/review` вернёт ошибку. Для другого проекта — `test1310\2309` / `1009`
    или `G:\9potok\1310`.
 3. **Общий индекс содержит чужие проекты** (`G:\SKR_PRO\...`, репозитории
-   `test1310`). Поиск фильтруется по `docs_dir`, но БД занимает ~42 МБ;
+   `test1310`). Поиск фильтруется по `docs_dir`, но БД занимает ~58 МБ;
    при желании можно пересобрать индекс только по нужной папке.
 4. **Секреты в `1210/docs/session-handoff.md`**: RAG-ревью нашло VPS IP и путь
    к SSH-ключу. Файл стоит почистить/обезличить и проверить, не попал ли он
@@ -333,18 +323,13 @@ python review_pr.py --repo G:\9potok\test1310\1210 `
 
 ## 9. Следующие шаги (по приоритету)
 
-1. **Закоммитить задачу 2** (файлы из §3) и запушить:
+1. **Отправить workflow после обновления PAT** (коммит `7b4b2b6` уже готов):
    ```powershell
    cd G:\9potok\1310
-   git add .github rtk_app/pr_review.py review_pr.py tests/check_pr_review.py `
-           tests/check_project_help.py web/server.py js/app.js README.md `
-           docs/REPORT_task6_traceability.md docs/REPORT_task7_traceability.md `
-           docs/VERIFY_task2.md docs/session-handoff.md .gitignore
-   git commit -m "feat(review): AI-ревью PR (diff + RAG), GitHub Action и /review"
    git push origin master
    ```
-   Перед пушем уточнить у пользователя целевой репозиторий/ветку
-   (`origin` = kykich/1310; ранее также пушили в `r1210/feature/rag-help`).
+   Если Windows Credential Manager хранит старый токен — удалить
+   `git:https://github.com` в «Учётные данные Windows» и повторить push.
 2. **Проверить Action на реальном PR**: добавить секрет, создать ветку/PR,
    убедиться в комментарии и артефакте `ai-review`.
 3. **Проверить тестовый стенд версий**: поставить `docs:` =
