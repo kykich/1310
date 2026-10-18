@@ -34,7 +34,7 @@ AI-ревью PR: diff + RAG → баги/архитектура/рекомен�
 | Задача | Статус | Где смотреть |
 |---|---|---|
 | 1. RAG по README/`docs`/коду + MCP git + `/help` | **Готово**, закоммичено (`e8c8308`) | `docs/REPORT_task6_traceability.md`, README |
-| 2. AI-ревью PR (diff + RAG → 3 раздела, GitHub Action, `/review`) | **Готово**: код/доки в `6cc961c`, `fb70372` (на GitHub); workflow — локальный `7b4b2b6`, ждёт `workflow`-scope PAT | `docs/REPORT_task7_traceability.md`, `docs/VERIFY_task2.md` |
+| 2. AI-ревью PR (diff + RAG → 3 раздела, GitHub Action, `/review`) | **Готово**: код/доки в `6cc961c`, `fb70372`, `f70191e` (на GitHub); workflow — локальный коммит над `f70191e`, ждёт `workflow`-scope PAT | `docs/REPORT_task7_traceability.md`, `docs/VERIFY_task2.md` |
 | 3. Мини-сервис поддержки (FAQ + тикеты + CRM/MCP) | **Не начато** | `docs/Final_task.md`, задача 3 |
 | 4. Ассистент по файлам проекта (чтение/поиск/изменение) | **Не начато** | `docs/Final_task.md`, задача 4 |
 
@@ -124,19 +124,21 @@ AI-ревью PR: diff + RAG → баги/архитектура/рекомен�
 origin  https://github.com/kykich/1310.git
 r1210   https://github.com/kykich/1210.git
 
-* 7b4b2b6 (master, ahead 1) ci(review): GitHub Action AI-ревью PR
-* fb70372 (origin/master) docs: AI-ревью, /review, Local и тестовый стенд
+* <workflow> (master, ahead 1) ci(review): GitHub Action AI-ревью PR
+* f70191e (origin/master) docs: зафиксировать состояние коммитов и push
+* fb70372 docs: AI-ревью, /review, Local и тестовый стенд
 * 6cc961c feat(review): AI-ревью PR (diff + RAG), команда /review и Local
 * e8c8308 feat(rag): RAG по docs/коду, команда /help и MCP-сервер «Проект»
   r1210/feature/rag-help -> e8c8308   (пуш в kykich/1210 выполнен)
 ```
 
-`6cc961c` и `fb70372` отправлены в `origin/master`
-(`e8c8308..fb70372`). Рабочее дерево чистое.
+`6cc961c`, `fb70372` и `f70191e` отправлены в `origin/master`
+(`e8c8308..f70191e`). Рабочее дерево чистое.
 
-Коммит `7b4b2b6` (`.github/workflows/ai-review.yml`) **локальный**:
+Workflow-коммит (`.github/workflows/ai-review.yml`) **локальный**:
 HTTPS-токен без scope `workflow` не даёт GitHub создать workflow-файл.
-После обновления токена — `git push origin master`.
+После обновления токена — `git push origin master` (workflow-коммит будет
+пересоздан при необходимости, его hash не фиксируйте в документах).
 
 Ветка `backup/task2-full-push` (`f69dbb5`) — резервная копия исходных двух
 коммитов, включавших workflow.
@@ -279,7 +281,7 @@ python review_pr.py --repo G:\9potok\test1310\1210 `
 | `/review v1009 v1210` | 79 файлов, diff обрезан лимитом 120 000 символов (ожидаемо) |
 | `/help` с локальной моделью | ответила `Local` (автоопределение через `/v1/models`), без `--local-url` |
 | `--model Local` без запущенного сервера | понятная ошибка, без подмены GigaChat |
-| GitHub Action на реальном PR | **не проверялся**: workflow в локальном `7b4b2b6`, ждёт push с `workflow`-scope PAT |
+| GitHub Action на реальном PR | **не проверялся**: workflow в локальном коммите, ждёт push с `workflow`-scope PAT |
 
 Для длинных диффов использовать `--max-tokens 8000`: при 4000 ответ
 обрезается.
@@ -288,7 +290,7 @@ python review_pr.py --repo G:\9potok\test1310\1210 `
 
 ## 8. Известные проблемы и риски
 
-1. **Workflow не отправлен в GitHub.** Коммит `7b4b2b6` локальный: PAT без
+1. **Workflow не отправлен в GitHub.** Локальный workflow-коммит: PAT без
    scope `workflow` не может создать `.github/workflows/ai-review.yml`.
    Обновить токен (classic: `workflow`; fine-grained: Workflows Read/write),
    затем `git push origin master`. После этого проверить Action на PR и
@@ -323,7 +325,7 @@ python review_pr.py --repo G:\9potok\test1310\1210 `
 
 ## 9. Следующие шаги (по приоритету)
 
-1. **Отправить workflow после обновления PAT** (коммит `7b4b2b6` уже готов):
+1. **Отправить workflow после обновления PAT** (workflow-коммит уже готов):
    ```powershell
    cd G:\9potok\1310
    git push origin master
