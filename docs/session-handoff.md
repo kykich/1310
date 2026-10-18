@@ -34,7 +34,7 @@ AI-ревью PR: diff + RAG → баги/архитектура/рекомен�
 | Задача | Статус | Где смотреть |
 |---|---|---|
 | 1. RAG по README/`docs`/коду + MCP git + `/help` | **Готово**, закоммичено (`e8c8308`) | `docs/REPORT_task6_traceability.md`, README |
-| 2. AI-ревью PR (diff + RAG → 3 раздела, GitHub Action, `/review`) | **Готово**: код/доки в `6cc961c`, `fb70372`, `f70191e` (на GitHub); workflow — локальный коммит над `f70191e`, ждёт `workflow`-scope PAT | `docs/REPORT_task7_traceability.md`, `docs/VERIFY_task2.md` |
+| 2. AI-ревью PR (diff + RAG → 3 раздела, GitHub Action, `/review`) | **Готово**: код и документация на GitHub; workflow — локальный коммит над `origin/master`, ждёт `workflow`-scope PAT | `docs/REPORT_task7_traceability.md`, `docs/VERIFY_task2.md` |
 | 3. Мини-сервис поддержки (FAQ + тикеты + CRM/MCP) | **Не начато** | `docs/Final_task.md`, задача 3 |
 | 4. Ассистент по файлам проекта (чтение/поиск/изменение) | **Не начато** | `docs/Final_task.md`, задача 4 |
 
@@ -125,15 +125,13 @@ origin  https://github.com/kykich/1310.git
 r1210   https://github.com/kykich/1210.git
 
 * <workflow> (master, ahead 1) ci(review): GitHub Action AI-ревью PR
-* f70191e (origin/master) docs: зафиксировать состояние коммитов и push
-* fb70372 docs: AI-ревью, /review, Local и тестовый стенд
-* 6cc961c feat(review): AI-ревью PR (diff + RAG), команда /review и Local
+* origin/master — код и документация (см. `git log`: feat(review), docs, handoff)
 * e8c8308 feat(rag): RAG по docs/коду, команда /help и MCP-сервер «Проект»
   r1210/feature/rag-help -> e8c8308   (пуш в kykich/1210 выполнен)
 ```
 
-`6cc961c`, `fb70372` и `f70191e` отправлены в `origin/master`
-(`e8c8308..f70191e`). Рабочее дерево чистое.
+Код (`6cc961c`), документация и handoff-коммиты отправлены в
+`origin/master`. Рабочее дерево чистое.
 
 Workflow-коммит (`.github/workflows/ai-review.yml`) **локальный**:
 HTTPS-токен без scope `workflow` не даёт GitHub создать workflow-файл.
